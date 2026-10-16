@@ -130,6 +130,7 @@ def propose_response(incident_id: str, candidate_action: str, evidence_ids: List
     Does NOT execute real infrastructure actions. Read-only validation.
     """
     valid_actions = {
+        "simulate_canary_rollback": "Simulate rollback of recent failing deployment to previous stable version.",
         "rollback_deployment": "Roll back recent failing deployment to previous stable version.",
         "simulate_service_isolation": "Isolate failing service to prevent cascading blast radius.",
         "create_remediation_ticket": "Generate Jira/Linear ticket with graph path and evidence links.",
