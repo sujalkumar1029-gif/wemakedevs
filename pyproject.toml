@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oracle"
+version = "0.1.0"
+description = "Evidence-Grounded Incident Investigation Agent built with FalkorDB"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "falkordb>=1.8.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "python-dotenv>=1.0.1",
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
