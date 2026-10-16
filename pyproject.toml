@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "oracle"
 version = "0.1.0"
-description = "Evidence-Grounded Incident Investigation Agent built with FalkorDB"
+description = "ImpactGraph: Trace the cause. Map the impact. Act with evidence. Built with FalkorDB."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

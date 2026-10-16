@@ -37,8 +37,8 @@ from oracle.mcp_tools import (
 )
 
 app = FastAPI(
-    title="ORACLE Incident Investigation Agent API",
-    description="Evidence-Grounded Incident Investigation Agent powered by FalkorDB (Track 01)",
+    title="ImpactGraph: Incident Investigation Agent API",
+    description="Trace the cause. Map the impact. Act with evidence. Powered by FalkorDB (Track 01)",
     version="1.0.0",
 )
 

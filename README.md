@@ -1,4 +1,6 @@
-# ORACLE: Operational Reasoning and Causal Analysis through Linked Evidence
+# ImpactGraph: Operational Reasoning & Causal Analysis through Linked Evidence
+
+> **Trace the cause. Map the impact. Act with evidence.**
 
 [![FalkorDB Track 01](https://img.shields.io/badge/FalkorDB-Track%2001-3B82F6)](https://docs.falkordb.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -8,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6.svg)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-8.0-646CFF.svg)](https://vitejs.dev)
 
-**ORACLE** is an evidence-grounded incident investigation agent built natively on **FalkorDB** for **Graph Hacks Track 01: Agents That Act on Connected Data**.
+**ImpactGraph** (ORACLE) is a graph-native AI incident investigation agent that uses **FalkorDB** and **MCP tools** to trace dependencies, compare evidence-backed hypotheses, assess blast radius, and propose auditable responses for **Graph Hacks Track 01: Agents That Act on Connected Data**.
 
 ---
 

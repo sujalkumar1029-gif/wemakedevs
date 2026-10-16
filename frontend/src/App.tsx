@@ -170,7 +170,7 @@ export const App: React.FC = () => {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <h1 style={{ fontSize: '1.1rem', fontWeight: 800, letterSpacing: '-0.02em', color: '#F1F5F9' }}>
-                ORACLE
+                ImpactGraph
               </h1>
               <span
                 style={{
@@ -187,7 +187,7 @@ export const App: React.FC = () => {
               </span>
             </div>
             <span style={{ fontSize: '0.72rem', color: '#06B6D4', fontWeight: 600 }}>
-              Evidence-Grounded Incident Investigation Agent • Track 01
+              Trace the cause. Map the impact. Act with evidence. • Track 01
             </span>
           </div>
         </div>

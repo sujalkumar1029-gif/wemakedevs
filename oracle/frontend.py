@@ -11,7 +11,7 @@ def get_html_dashboard() -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ORACLE — Evidence-Grounded Incident Investigation Agent</title>
+    <title>ImpactGraph — Trace the cause. Map the impact. Act with evidence.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -340,8 +340,8 @@ def get_html_dashboard() -> str:
         <div class="brand">
             <div class="logo-icon">Ω</div>
             <div class="brand-text">
-                <h1>ORACLE Incident Agent</h1>
-                <span>FalkorDB Track 01 • Connected Data Reasoner</span>
+                <h1>ImpactGraph</h1>
+                <span>Trace the cause. Map the impact. Act with evidence. • FalkorDB Track 01</span>
             </div>
         </div>
         <div class="header-actions">
