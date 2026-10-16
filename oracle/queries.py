@@ -18,12 +18,17 @@ def query_incident_context(incident_id: str) -> Optional[Dict[str, Any]]:
     OPTIONAL MATCH (team:Team)-[:OWNS]->(svc)
     RETURN inc.id AS incident_id,
            inc.title AS title,
+           inc.description AS description,
            inc.severity AS severity,
            inc.status AS status,
            inc.created_at AS created_at,
+           inc.is_synthetic AS is_synthetic,
            collect(DISTINCT {
                alert_id: alt.id,
                signal: alt.signal,
+               alert_type: alt.alert_type,
+               observed_value: alt.observed_value,
+               threshold: alt.threshold,
                timestamp: alt.timestamp,
                source: alt.source,
                service_id: svc.id,
@@ -53,11 +58,10 @@ def query_blast_radius(service_id: str, max_depth: int = 4) -> List[Dict[str, An
     Direction convention: (consumer:Service)-[:DEPENDS_ON]->(provider:Service)
     Traversing upstream in reverse from target gives consumers impacted by target's failure.
     """
-    # Depth must be bounded
     depth = max(1, min(int(max_depth), 6))
     query = f"""
     MATCH path = (consumer:Service)-[:DEPENDS_ON*1..{depth}]->(target:Service)
-    WHERE target.id = $service_id
+    WHERE target.id = $service_id OR target.name = $service_id
     OPTIONAL MATCH (t:Team)-[:OWNS]->(consumer)
     RETURN consumer.id AS affected_service_id,
            consumer.name AS affected_service,
@@ -129,10 +133,30 @@ def query_deployment_history(service_id: str, limit: int = 10) -> List[Dict[str,
     return run_query(query, {"service_id": service_id, "limit": lim})
 
 
-def query_evidence_chain(evidence_ids: List[str]) -> List[Dict[str, Any]]:
+def query_evidence_chain(evidence_ids: Optional[List[str]] = None, incident_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Fetches detailed evidence records and their graph references.
+    Fetches detailed evidence records either by explicit IDs or by incident ID.
     """
+    if incident_id and not evidence_ids:
+        query = """
+        MATCH (inc:Incident {id: $incident_id})<-[:SUPPORTS]-(evi:Evidence)
+        OPTIONAL MATCH (evi)-[:OBSERVED]->(s:Service)
+        OPTIONAL MATCH (evi)-[:REFERS_TO]->(d:Deployment)
+        RETURN evi.id AS evidence_id,
+               evi.kind AS kind,
+               evi.source_type AS source_type,
+               evi.source_ref AS source_ref,
+               evi.observed_at AS observed_at,
+               evi.observation AS observation,
+               evi.summary AS summary,
+               s.id AS observed_service_id,
+               s.name AS observed_service_name,
+               d.id AS refers_to_deployment_id,
+               d.version AS refers_to_version
+        ORDER BY evi.observed_at ASC
+        """
+        return run_query(query, {"incident_id": incident_id})
+
     if not evidence_ids:
         return []
 
@@ -143,8 +167,10 @@ def query_evidence_chain(evidence_ids: List[str]) -> List[Dict[str, Any]]:
     OPTIONAL MATCH (evi)-[:REFERS_TO]->(d:Deployment)
     RETURN evi.id AS evidence_id,
            evi.kind AS kind,
+           evi.source_type AS source_type,
            evi.source_ref AS source_ref,
            evi.observed_at AS observed_at,
+           evi.observation AS observation,
            evi.summary AS summary,
            s.id AS observed_service_id,
            s.name AS observed_service_name,
@@ -153,6 +179,46 @@ def query_evidence_chain(evidence_ids: List[str]) -> List[Dict[str, Any]]:
     ORDER BY evi.observed_at ASC
     """
     return run_query(query, {"evidence_ids": evidence_ids})
+
+
+def query_vulnerable_services(vulnerability_id: str) -> List[Dict[str, Any]]:
+    """
+    Finds all services that consume a package containing the given vulnerability.
+    """
+    query = """
+    MATCH (s:Service)-[:USES]->(p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability)
+    WHERE v.id = $vulnerability_id OR v.title = $vulnerability_id
+    OPTIONAL MATCH (team:Team)-[:OWNS]->(s)
+    RETURN s.id AS service_id,
+           s.name AS service_name,
+           s.criticality AS criticality,
+           s.health AS health,
+           p.name AS package_name,
+           p.version AS package_version,
+           v.id AS vulnerability_id,
+           v.severity AS severity,
+           team.name AS owner_team
+    """
+    return run_query(query, {"vulnerability_id": vulnerability_id})
+
+
+def query_service_owner(service_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Looks up the team and on-call engineer responsible for a service.
+    """
+    query = """
+    MATCH (s:Service)
+    WHERE s.id = $service_id OR s.name = $service_id
+    OPTIONAL MATCH (t:Team)-[:OWNS]->(s)
+    RETURN s.id AS service_id,
+           s.name AS service_name,
+           s.criticality AS criticality,
+           coalesce(t.id, 'unknown-team') AS team_id,
+           coalesce(t.name, 'Unassigned') AS team_name,
+           coalesce(t.on_call, 'Unassigned') AS on_call
+    """
+    rows = run_query(query, {"service_id": service_id})
+    return rows[0] if rows else None
 
 
 def query_service_details(service_id: str) -> Optional[Dict[str, Any]]:

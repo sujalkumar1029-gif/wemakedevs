@@ -1,10 +1,10 @@
 """
 MCP (Model Context Protocol) Tool implementations for ORACLE.
-Exposes narrow domain tools adhering to Section 7 of the FalkorDB Implementation Guide.
+Exposes narrow domain tools adhering to Section 8 of the Master Engineering Prompt.
 All tools are strictly read-only, validated, and bounded.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 from oracle.queries import (
     query_incident_context,
@@ -12,6 +12,8 @@ from oracle.queries import (
     query_candidate_causes,
     query_deployment_history,
     query_evidence_chain,
+    query_vulnerable_services,
+    query_service_owner,
 )
 
 
@@ -32,7 +34,8 @@ class BlastRadiusInput(BaseModel):
 
 
 class EvidenceChainInput(BaseModel):
-    evidence_ids: List[str] = Field(..., min_length=1, max_length=20, description="List of evidence IDs to retrieve")
+    incident_id: Optional[str] = Field(None, description="Target incident ID to fetch all supporting evidence for")
+    evidence_ids: Optional[List[str]] = Field(None, description="Explicit list of evidence IDs to retrieve")
 
 
 class DeploymentHistoryInput(BaseModel):
@@ -40,19 +43,24 @@ class DeploymentHistoryInput(BaseModel):
     limit: int = Field(default=10, ge=1, le=20, description="Max deployment records to return")
 
 
+class VulnerableServicesInput(BaseModel):
+    vulnerability_id: str = Field(..., description="CVE ID or identifier (e.g., 'CVE-2026-4412')")
+
+
+class ServiceOwnerInput(BaseModel):
+    service_id: str = Field(..., description="Target service ID or name")
+
+
 class ProposeResponseInput(BaseModel):
     incident_id: str = Field(..., description="Target incident ID")
-    candidate_action: str = Field(..., description="Candidate remediation action (e.g., 'rollback_deployment', 'isolate_service')")
+    candidate_action: str = Field(..., description="Candidate remediation action (e.g., 'simulate_canary_rollback')")
     evidence_ids: List[str] = Field(..., description="Evidence IDs supporting this proposed action")
 
 
-# --- Tool Implementations ---
+# --- Tool Handlers ---
 
 def get_incident_context(incident_id: str) -> Dict[str, Any]:
-    """
-    Fetches the incident summary, triggered alerts, affected services, and linked evidence IDs.
-    Read-only.
-    """
+    """Fetches incident summary, alerts, observed services, and evidence IDs."""
     ctx = query_incident_context(incident_id)
     if not ctx:
         return {
@@ -68,11 +76,7 @@ def get_incident_context(incident_id: str) -> Dict[str, Any]:
 
 
 def trace_candidate_causes(incident_id: str, max_depth: int = 3) -> Dict[str, Any]:
-    """
-    Traces multi-hop paths from alerted services to candidate causes:
-    recent deployments, package vulnerabilities, and failing dependencies.
-    Read-only.
-    """
+    """Traces multi-hop paths from alerted services to candidate causes (deployments, vulnerabilities)."""
     causes = query_candidate_causes(incident_id, max_depth=max_depth)
     return {
         "status": "SUCCESS",
@@ -82,10 +86,7 @@ def trace_candidate_causes(incident_id: str, max_depth: int = 3) -> Dict[str, An
 
 
 def get_blast_radius(service_id: str, max_depth: int = 4) -> Dict[str, Any]:
-    """
-    Computes downstream services affected by a failure in service_id via DEPENDS_ON traversal.
-    Read-only.
-    """
+    """Computes downstream services affected by a failure in service_id via DEPENDS_ON reverse traversal."""
     blast = query_blast_radius(service_id, max_depth=max_depth)
     return {
         "status": "SUCCESS",
@@ -96,12 +97,9 @@ def get_blast_radius(service_id: str, max_depth: int = 4) -> Dict[str, Any]:
     }
 
 
-def get_evidence_chain(evidence_ids: List[str]) -> Dict[str, Any]:
-    """
-    Fetches source references, timestamps, summaries, and node links for the requested evidence IDs.
-    Read-only.
-    """
-    evidence = query_evidence_chain(evidence_ids)
+def get_evidence_chain(incident_id: Optional[str] = None, evidence_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Fetches source references, timestamps, observations, and node links for evidence records."""
+    evidence = query_evidence_chain(evidence_ids=evidence_ids, incident_id=incident_id)
     return {
         "status": "SUCCESS",
         "tool": "get_evidence_chain",
@@ -111,16 +109,42 @@ def get_evidence_chain(evidence_ids: List[str]) -> Dict[str, Any]:
 
 
 def get_deployment_history(service_id: str, limit: int = 10) -> Dict[str, Any]:
-    """
-    Retrieves recent deployment versions, timestamps, and rollout statuses for a service.
-    Read-only.
-    """
+    """Retrieves recent deployment versions, timestamps, and rollout statuses for a service."""
     deployments = query_deployment_history(service_id, limit=limit)
     return {
         "status": "SUCCESS",
         "tool": "get_deployment_history",
         "service_id": service_id,
         "data": deployments,
+    }
+
+
+def get_vulnerable_services(vulnerability_id: str) -> Dict[str, Any]:
+    """Discovers services consuming packages affected by the specified vulnerability."""
+    services = query_vulnerable_services(vulnerability_id)
+    return {
+        "status": "SUCCESS",
+        "tool": "get_vulnerable_services",
+        "vulnerability_id": vulnerability_id,
+        "count": len(services),
+        "data": services,
+    }
+
+
+def get_service_owner(service_id: str) -> Dict[str, Any]:
+    """Retrieves team ownership and on-call contact for a given service."""
+    owner = query_service_owner(service_id)
+    if not owner:
+        return {
+            "status": "NOT_FOUND",
+            "message": f"Service '{service_id}' ownership not found.",
+            "data": None,
+        }
+    return {
+        "status": "SUCCESS",
+        "tool": "get_service_owner",
+        "service_id": service_id,
+        "data": owner,
     }
 
 
@@ -131,10 +155,9 @@ def propose_response(incident_id: str, candidate_action: str, evidence_ids: List
     """
     valid_actions = {
         "simulate_canary_rollback": "Simulate rollback of recent failing deployment to previous stable version.",
-        "rollback_deployment": "Roll back recent failing deployment to previous stable version.",
         "simulate_service_isolation": "Isolate failing service to prevent cascading blast radius.",
-        "create_remediation_ticket": "Generate Jira/Linear ticket with graph path and evidence links.",
-        "failover_traffic": "Reroute ingress traffic to healthy fallback region/cluster."
+        "simulate_team_escalation": "Escalate synthetic incident to owning team on-call engineer.",
+        "acknowledge_incident": "Acknowledge synthetic incident in on-call queue."
     }
 
     if candidate_action not in valid_actions:
@@ -146,7 +169,7 @@ def propose_response(incident_id: str, candidate_action: str, evidence_ids: List
         }
 
     # Verify evidence existence in graph
-    evidence_records = query_evidence_chain(evidence_ids)
+    evidence_records = query_evidence_chain(evidence_ids=evidence_ids)
     if not evidence_records:
         return {
             "status": "REJECTED",
@@ -192,7 +215,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_evidence_chain",
-        "description": "Fetches verified evidence logs, scan reports, and metric anomalies by ID.",
+        "description": "Fetches verified evidence logs, scan reports, and metric anomalies by incident or evidence ID.",
         "input_schema": EvidenceChainInput.model_json_schema(),
         "handler": get_evidence_chain,
         "read_only": True,
@@ -202,6 +225,20 @@ TOOL_DEFINITIONS = [
         "description": "Retrieves recent deployment versions and statuses for a service.",
         "input_schema": DeploymentHistoryInput.model_json_schema(),
         "handler": get_deployment_history,
+        "read_only": True,
+    },
+    {
+        "name": "get_vulnerable_services",
+        "description": "Discovers services consuming packages affected by the specified vulnerability.",
+        "input_schema": VulnerableServicesInput.model_json_schema(),
+        "handler": get_vulnerable_services,
+        "read_only": True,
+    },
+    {
+        "name": "get_service_owner",
+        "description": "Retrieves team ownership and on-call contact for a given service.",
+        "input_schema": ServiceOwnerInput.model_json_schema(),
+        "handler": get_service_owner,
         "read_only": True,
     },
     {

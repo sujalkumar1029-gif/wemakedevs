@@ -1,14 +1,15 @@
 """
-ORACLE Step 12 Acceptance Test Suite.
-Verifies all 8 critical hackathon criteria:
+ORACLE Section 14 Acceptance Test Suite.
+Verifies all master criteria:
 1. Fresh environment starts and seed script is repeatable.
 2. Known incident returns expected connected services.
 3. Disconnected negative-test service is excluded.
 4. Competing hypotheses (deployment vs CVE) are evaluated and differentiated with evidence.
-5. Missing evidence produces an uncertainty message, not a fabricated cause.
-6. Invalid IDs and oversized requests are rejected.
-7. Unapproved action cannot execute.
-8. Approved simulated action writes an audit record.
+5. Findings explicitly categorized into OBSERVED, INFERRED, UNKNOWN.
+6. Missing evidence produces an uncertainty message, not a fabricated cause.
+7. Invalid IDs and disallowed actions are rejected.
+8. Unapproved action cannot execute and agent cannot self-approve.
+9. Approved simulated action writes an audit record.
 """
 
 import pytest
@@ -18,11 +19,14 @@ from oracle.mcp_tools import (
     get_incident_context,
     get_blast_radius,
     propose_response,
+    get_vulnerable_services,
+    get_service_owner
 )
 from oracle.agent import OracleAgent
 from oracle.actions import (
-    ActionExecutionRequest,
-    execute_simulated_action,
+    ActionProposalRequest,
+    create_proposal,
+    approve_and_execute_action,
     get_audit_trail,
 )
 
@@ -43,6 +47,7 @@ def test_seed_script_is_repeatable():
     assert stats1["total_nodes"] == stats2["total_nodes"]
     assert stats1["total_edges"] == stats2["total_edges"]
     assert stats1["incident_id"] == "INC-4091"
+    assert stats1["is_synthetic"] is True
 
 
 def test_known_incident_connected_services():
@@ -59,7 +64,6 @@ def test_known_incident_connected_services():
 
 def test_disconnected_service_is_excluded():
     """Criteria: Disconnected negative test service is excluded from blast radius."""
-    # Blast radius of payment-service
     blast = query_blast_radius("svc-payment", max_depth=4)
     affected_services = [b["affected_service"] for b in blast]
 
@@ -70,7 +74,7 @@ def test_disconnected_service_is_excluded():
 
     # Disconnected negative test service must NOT appear
     assert "analytics-pipeline" not in affected_services
-    assert "inventory-service" not in affected_services  # sibling, not consumer of payment-service
+    assert "inventory-service" not in affected_services
 
 
 def test_competing_hypotheses_and_differentiation():
@@ -94,67 +98,82 @@ def test_competing_hypotheses_and_differentiation():
     assert deploy_hypo["confidence_score"] > 0.8
     assert "EVI-901" in deploy_hypo["supporting_evidence_ids"]
 
-    # Vulnerability is refuted / secondary due to counterevidence (scan 4 days prior, no traffic)
+    # Vulnerability is refuted due to counterevidence (scan 4 days prior, zero exploit traffic)
     assert vuln_hypo["status"] == "REFUTED"
     assert vuln_hypo["temporal_match"] is False
     assert vuln_hypo["counter_evidence"] is not None
 
 
+def test_findings_explicit_categorization():
+    """Criteria: Findings are separated into OBSERVED, INFERRED, and UNKNOWN."""
+    agent = OracleAgent()
+    report = agent.investigate("INC-4091")
+    findings = report["findings"]
+
+    categories = {f["category"] for f in findings}
+    assert "OBSERVED" in categories
+    assert "INFERRED" in categories
+    assert "UNKNOWN" in categories
+
+
 def test_missing_evidence_produces_uncertainty():
     """Criteria: Missing evidence produces an uncertainty message, not a fabricated root cause."""
     agent = OracleAgent()
-    # Query non-existent incident
     result = agent.investigate("INC-NONEXISTENT-999")
     assert result["status"] == "NOT_FOUND"
     assert "not found" in result["message"].lower()
 
 
-def test_invalid_ids_and_disallowed_actions_rejected():
-    """Criteria: Invalid IDs and disallowed actions are rejected."""
-    # Disallowed action
-    req = ActionExecutionRequest(
-        action_type="delete_production_database",  # Malicious/destructive attempt
+def test_invalid_disallowed_actions_rejected():
+    """Criteria: Invalid actions outside allowlist are rejected."""
+    req = ActionProposalRequest(
+        action_type="delete_production_database",
         incident_id="INC-4091",
         target_id="svc-payment",
         evidence_ids=["EVI-901"],
-        approved=True,
     )
-    res = execute_simulated_action(req)
+    res = create_proposal(req)
     assert res["status"] == "REJECTED_DISALLOWED"
 
 
-def test_unapproved_action_cannot_execute():
-    """Criteria: Unapproved action cannot execute."""
-    req = ActionExecutionRequest(
+def test_agent_cannot_self_approve():
+    """Criteria: Agent cannot approve its own proposals; human approval required."""
+    req = ActionProposalRequest(
         action_type="simulate_canary_rollback",
         incident_id="INC-4091",
         target_id="dep-pay-v2.4.1",
         evidence_ids=["EVI-901"],
-        approved=False,  # Human approval is NOT provided
-        approver=None
+        proposed_by="ORACLE Agent"
     )
-    res = execute_simulated_action(req)
-    assert res["status"] == "REJECTED_UNAPPROVED"
-    assert "Security policy violation" in res["message"]
+    proposal = create_proposal(req)
+    action_id = proposal["action_id"]
+
+    res = approve_and_execute_action(action_id, approver="ORACLE Agent")
+    assert res["status"] == "REJECTED_SELF_APPROVAL"
 
 
 def test_approved_simulated_action_writes_audit_record():
     """Criteria: Approved simulated action writes an audit record."""
-    req = ActionExecutionRequest(
+    req = ActionProposalRequest(
         action_type="simulate_canary_rollback",
         incident_id="INC-4091",
         target_id="dep-pay-v2.4.1",
         evidence_ids=["EVI-901", "EVI-903"],
-        approved=True,  # Explicit approval provided
-        approver="Sarah Connor (Incident Commander)",
-        notes="Rollback confirmed after verifying connection pool failure."
+        proposed_by="ORACLE Agent"
     )
-    res = execute_simulated_action(req)
-    assert res["status"] == "EXECUTED_SIMULATED"
-    assert res["approved"] is True
+    proposal = create_proposal(req)
+    action_id = proposal["action_id"]
+
+    res = approve_and_execute_action(
+        action_id=action_id,
+        approver="Sarah Connor (Incident Commander)",
+        notes="Rollback confirmed by Lead SRE"
+    )
+    assert res["status"] == "SUCCESS"
+    assert res["state"] == "EXECUTED_SIMULATED"
 
     # Verify audit log persistence
     trail = get_audit_trail("INC-4091")
-    executed_events = [t for t in trail if t["action_id"] == res["action_id"]]
+    executed_events = [t for t in trail if t["action_id"] == action_id]
     assert len(executed_events) == 1
-    assert executed_events[0]["approver"] == "Sarah Connor (Incident Commander)"
+    assert executed_events[0]["actor"] == "Sarah Connor (Incident Commander)"

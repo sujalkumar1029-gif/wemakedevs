@@ -1,22 +1,27 @@
 """
 FastAPI REST Application for ORACLE.
-Exposes incident triage, bounded MCP tools, action approval, and graph visualization.
+Implements Section 11: Exact endpoint contracts, Pydantic schemas,
+action proposal/approval lifecycle, audit log, and graph topology.
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from oracle.config import settings
 from oracle.db import get_client, run_query
 from oracle.seed_data import seed_database
 from oracle.agent import OracleAgent
+from oracle.queries import query_incident_context, query_evidence_chain
 from oracle.actions import (
-    ActionExecutionRequest,
-    execute_simulated_action,
+    ActionProposalRequest,
+    ActionApprovalRequest,
+    create_proposal,
+    approve_and_execute_action,
     get_audit_trail,
+    get_proposals,
     ALLOWLISTED_ACTIONS,
 )
 from oracle.mcp_tools import (
@@ -24,8 +29,10 @@ from oracle.mcp_tools import (
     get_incident_context,
     trace_candidate_causes,
     get_blast_radius,
-    get_evidence_chain,
+    get_evidence_chain as tool_evidence_chain_func,
     get_deployment_history,
+    get_vulnerable_services,
+    get_service_owner,
     propose_response,
 )
 
@@ -35,23 +42,26 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Enable CORS for local development
+# CORS configuration supporting both local Vite frontend and general local dev
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-agent = OracleAgent(max_tool_calls=8)
+agent = OracleAgent(max_tool_calls=10)
 
 
-# --- 1. Health & Status ---
+# ===========================================================================
+# 1. Health & Dependency Status (GET /health and GET /api/health)
+# ===========================================================================
 
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
-    """Checks FalkorDB connectivity and server health."""
+    """Accurately checks FalkorDB connectivity and server health."""
     try:
         client = get_client()
         ping = client.connection.ping()
@@ -62,17 +72,22 @@ def health_check():
             "falkordb_host": settings.FALKORDB_HOST,
             "falkordb_port": settings.FALKORDB_PORT,
             "active_graphs": graphs,
+            "is_synthetic": True
         }
     except Exception as e:
         return {
             "status": "DEGRADED",
             "falkordb_connected": False,
             "error": str(e),
+            "is_synthetic": True
         }
 
 
-# --- 2. Seed Synthetic Graph ---
+# ===========================================================================
+# 2. Database Seeder (POST /seed and POST /api/seed)
+# ===========================================================================
 
+@app.post("/seed")
 @app.post("/api/seed")
 def seed_graph():
     """Deterministically seeds or resets the synthetic incident graph."""
@@ -83,8 +98,11 @@ def seed_graph():
         raise HTTPException(status_code=500, detail=f"Seeding failed: {str(e)}")
 
 
-# --- 3. Incident Listing ---
+# ===========================================================================
+# 3. Incident Endpoints (GET /incidents, GET /incidents/{id})
+# ===========================================================================
 
+@app.get("/incidents")
 @app.get("/api/incidents")
 def list_incidents():
     """Lists all incidents available in FalkorDB."""
@@ -96,19 +114,33 @@ def list_incidents():
            inc.severity AS severity,
            inc.status AS status,
            inc.created_at AS created_at,
+           inc.is_synthetic AS is_synthetic,
            count(DISTINCT alt) AS alert_count
     """
     rows = run_query(query)
-    return {"incidents": rows}
+    return {"incidents": rows, "count": len(rows), "is_synthetic": True}
 
 
-# --- 4. End-to-End Investigation ---
+@app.get("/incidents/{incident_id}")
+@app.get("/api/incidents/{incident_id}")
+def get_incident_detail(incident_id: str = Path(..., description="Target Incident ID")):
+    """Retrieves single incident details with alerts and observed services."""
+    ctx = query_incident_context(incident_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found in graph.")
+    return ctx
 
+
+# ===========================================================================
+# 4. Investigation Engine (POST /incidents/{id}/investigate, GET /api/investigate/{id})
+# ===========================================================================
+
+@app.post("/incidents/{incident_id}/investigate")
 @app.get("/api/investigate/{incident_id}")
-def run_investigation(incident_id: str):
+def run_investigation(incident_id: str = Path(..., description="Target Incident ID")):
     """
-    Triggers the ORACLE Agent reasoning loop for the specified incident.
-    Returns hypotheses, grounded evidence, blast radius, and proposed action.
+    Coordinates FalkorDB MCP tools to investigate incident causality.
+    Categorizes findings into OBSERVED, INFERRED, and UNKNOWN.
     """
     result = agent.investigate(incident_id)
     if result.get("status") == "NOT_FOUND":
@@ -116,11 +148,94 @@ def run_investigation(incident_id: str):
     return result
 
 
-# --- 5. Direct MCP Tool Invocations ---
+# ===========================================================================
+# 5. Incident Evidence (GET /incidents/{id}/evidence)
+# ===========================================================================
+
+@app.get("/incidents/{incident_id}/evidence")
+@app.get("/api/incidents/{incident_id}/evidence")
+def get_incident_evidence(incident_id: str = Path(..., description="Target Incident ID")):
+    """Retrieves all grounded evidence linked to an incident in FalkorDB."""
+    evidence = query_evidence_chain(incident_id=incident_id)
+    return {
+        "incident_id": incident_id,
+        "evidence_count": len(evidence),
+        "evidence": evidence,
+        "is_synthetic": True
+    }
+
+
+# ===========================================================================
+# 6. Action Lifecycle: Proposal & Human Approval (POST /actions/propose, POST /actions/{id}/approve)
+# ===========================================================================
+
+@app.post("/actions/propose")
+@app.post("/api/actions/propose")
+def propose_action(request: ActionProposalRequest):
+    """
+    Creates a simulated action proposal in PENDING_APPROVAL state.
+    Does NOT execute the action.
+    """
+    result = create_proposal(request)
+    if result.get("status") in ("REJECTED_DISALLOWED", "REJECTED_NO_EVIDENCE"):
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@app.post("/actions/{action_id}/approve")
+@app.post("/api/actions/{action_id}/approve")
+def approve_action(
+    action_id: str = Path(..., description="Proposal ID to approve"),
+    request: ActionApprovalRequest = None
+):
+    """
+    Applies explicit human approval and executes simulated remediation.
+    Rejects self-approval, duplicate executions, and unapproved requests.
+    """
+    if not request or not request.approver:
+        raise HTTPException(status_code=400, detail="Missing required approver identifier.")
+
+    result = approve_and_execute_action(
+        action_id=action_id,
+        approver=request.approver,
+        notes=request.notes
+    )
+
+    if result.get("status") == "NOT_FOUND":
+        raise HTTPException(status_code=404, detail=result["message"])
+    if result.get("status") == "REJECTED_ALREADY_PROCESSED":
+        raise HTTPException(status_code=400, detail=result["message"])
+    if result.get("status") == "REJECTED_SELF_APPROVAL":
+        raise HTTPException(status_code=403, detail=result["message"])
+
+    return result
+
+
+@app.get("/actions/proposals")
+@app.get("/api/actions/proposals")
+def list_proposals(incident_id: Optional[str] = None):
+    """Lists current action proposals and their approval states."""
+    return {"proposals": get_proposals(incident_id)}
+
+
+# ===========================================================================
+# 7. Audit Ledger (GET /audit and GET /api/audit)
+# ===========================================================================
+
+@app.get("/audit")
+@app.get("/api/audit")
+def audit_trail(incident_id: Optional[str] = None):
+    """Returns the immutable audit log of simulated remediation actions."""
+    return {"audit_log": get_audit_trail(incident_id)}
+
+
+# ===========================================================================
+# 8. MCP Tool Endpoints
+# ===========================================================================
 
 @app.get("/api/tools")
 def list_mcp_tools():
-    """Returns catalog of all registered narrow domain MCP tools."""
+    """Catalog of all registered narrow domain MCP tools."""
     return {
         "tools": [
             {
@@ -135,7 +250,7 @@ def list_mcp_tools():
 
 
 @app.get("/api/tools/incident_context")
-def tool_incident_context(incident_id: str = Query(..., description="Target Incident ID")):
+def tool_incident_context(incident_id: str = Query(...)):
     return get_incident_context(incident_id)
 
 
@@ -155,45 +270,31 @@ def tool_deployment_history(service_id: str = Query(...), limit: int = Query(10,
 
 
 @app.get("/api/tools/evidence_chain")
-def tool_evidence_chain(evidence_ids: str = Query(..., description="Comma-separated evidence IDs")):
-    ids = [e.strip() for e in evidence_ids.split(",") if e.strip()]
-    return get_evidence_chain(ids)
+def tool_evidence_chain(
+    incident_id: Optional[str] = Query(None),
+    evidence_ids: Optional[str] = Query(None)
+):
+    ids = [e.strip() for e in evidence_ids.split(",") if e.strip()] if evidence_ids else None
+    return tool_evidence_chain_func(incident_id=incident_id, evidence_ids=ids)
 
 
-# --- 6. Policy-Controlled Simulated Action Executor ---
-
-@app.post("/api/actions/execute")
-def execute_action(request: ActionExecutionRequest):
-    """
-    Simulates remediation action. Enforces approval gate and allowlist.
-    """
-    result = execute_simulated_action(request)
-    if result.get("status") == "REJECTED_UNAPPROVED":
-        raise HTTPException(
-            status_code=403,
-            detail=result["message"]
-        )
-    if result.get("status") in ("REJECTED_DISALLOWED", "REJECTED_NO_EVIDENCE"):
-        raise HTTPException(
-            status_code=400,
-            detail=result["message"]
-        )
-    return result
+@app.get("/api/tools/vulnerable_services")
+def tool_vulnerable_services(vulnerability_id: str = Query(...)):
+    return get_vulnerable_services(vulnerability_id)
 
 
-@app.get("/api/audit")
-def audit_trail(incident_id: Optional[str] = None):
-    """Returns the persistent audit log of simulated remediation actions."""
-    return {"audit_log": get_audit_trail(incident_id)}
+@app.get("/api/tools/service_owner")
+def tool_service_owner(service_id: str = Query(...)):
+    return get_service_owner(service_id)
 
 
-# --- 7. Full Graph Topology for Visualizer ---
+# ===========================================================================
+# 9. Full Graph Topology for Cytoscape Visualizer
+# ===========================================================================
 
 @app.get("/api/graph/topology")
 def get_graph_topology():
-    """
-    Exports full incident graph topology (nodes and links) for interactive visualizer.
-    """
+    """Exports full incident graph topology (nodes and links) for interactive visualizer."""
     query = """
     MATCH (n)
     OPTIONAL MATCH (n)-[r]->(m)
@@ -241,13 +342,28 @@ def get_graph_topology():
     return {
         "nodes": list(nodes_map.values()),
         "edges": edges,
+        "is_synthetic": True
     }
 
 
-# --- 8. Interactive Investigation Console (HTML/JS Web App) ---
+# ===========================================================================
+# 10. Dashboard Route (Serves React Production Build or Builtin Dashboard)
+# ===========================================================================
+
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if (frontend_dist / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="static_assets")
 
 @app.get("/", response_class=HTMLResponse)
 def index_page():
-    """Serves the rich ORACLE Incident Investigation Console."""
+    """Serves the React incident console or dynamic dashboard."""
+    dist_index = frontend_dist / "index.html"
+    if dist_index.exists():
+        return FileResponse(str(dist_index))
     from oracle.frontend import get_html_dashboard
     return get_html_dashboard()
+
