@@ -341,7 +341,7 @@ def get_html_dashboard() -> str:
             <div class="logo-icon">Ω</div>
             <div class="brand-text">
                 <h1>ImpactGraph</h1>
-                <span>Trace the cause. Map the impact. Act with evidence. • FalkorDB Track 01 • <strong style="color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.1); padding: 2px 6px; border-radius: 4px;">GPLv3</strong></span>
+                <span>Trace the cause. Map the impact. Act with evidence. • FalkorDB Track 01 • <strong style="color: #FBBF24; border: 1px solid rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.1); padding: 2px 6px; border-radius: 4px;">MIT</strong> <strong style="color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.1); padding: 2px 6px; border-radius: 4px;">GPLv3</strong></span>
             </div>
         </div>
         <div class="header-actions">

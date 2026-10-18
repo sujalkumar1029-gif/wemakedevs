@@ -7,7 +7,7 @@ name = "oracle"
 version = "0.1.0"
 description = "ImpactGraph: Trace the cause. Map the impact. Act with evidence. Built with FalkorDB."
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "MIT OR GPL-3.0-or-later" }
 requires-python = ">=3.10"
 dependencies = [
     "falkordb>=1.8.0",

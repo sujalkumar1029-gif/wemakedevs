@@ -500,6 +500,19 @@ export const App: React.FC = () => {
                 style={{
                   fontSize: '0.65rem',
                   fontWeight: 700,
+                  background: 'rgba(234, 179, 8, 0.15)',
+                  color: '#FDE047',
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(234, 179, 8, 0.3)',
+                }}
+              >
+                MIT
+              </span>
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
                   background: 'rgba(16, 185, 129, 0.15)',
                   color: '#6EE7B7',
                   padding: '2px 7px',
