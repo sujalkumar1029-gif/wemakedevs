@@ -85,6 +85,25 @@ When complex microservice outages occur, root causes are obscured by cascading a
 
 ## 🚀 Quick Start Guide
 
+### ⚡ One-Click Runners (Automated Setup & Launch)
+
+#### Windows:
+Double-click `run.bat` in File Explorer or run in Command Prompt:
+```cmd
+run.bat
+```
+*Other options:* `run.bat test` (run test suite), `run.bat seed` (re-seed graph), `run.bat dev` (FastAPI + Vite dev server).
+
+#### Linux / macOS / WSL:
+```bash
+./run.sh
+```
+*Other options:* `./run.sh test` (run test suite), `./run.sh seed` (re-seed graph), `./run.sh dev` (FastAPI + Vite dev server).
+
+---
+
+### Manual Step-by-Step Setup
+
 ### 1. Start FalkorDB
 ```bash
 docker run -d --name falkordb --restart unless-stopped -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest

@@ -2,6 +2,10 @@
 Deterministic synthetic incident graph seeder for ORACLE.
 Implements the exact schema from Section 6 of the Master Engineering Prompt.
 All records are explicitly marked with `is_synthetic: true`.
+Supports multiple realistic incident scenarios:
+- INC-4091: Cascading Checkout Failure (Canary Rollout vs Package CVE)
+- INC-3022: Redis Cache Stampede & Auth Token Eviction Surge (Config Rollout vs DDoS)
+- INC-5102: Logistics Carrier Webhook & Delivery Gateway Timeout (External Outage vs DNS)
 """
 
 from typing import Dict, Any
@@ -39,11 +43,21 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
 
     CREATE (inc2:Incident {
         id: 'INC-3022',
-        title: 'Transient Auth Cache Miss Rate Alert',
-        description: 'Elevated Redis read latencies on session token cache',
-        severity: 'LOW',
-        status: 'RESOLVED',
-        created_at: '2026-10-15T08:00:00Z',
+        title: 'Redis Cache Stampede & Auth Token Eviction Surge',
+        description: 'Session cache TTL misconfiguration triggering downstream database authentication stampede',
+        severity: 'HIGH',
+        status: 'ACTIVE',
+        created_at: '2026-10-17T08:15:00Z',
+        is_synthetic: true
+    })
+
+    CREATE (inc3:Incident {
+        id: 'INC-5102',
+        title: 'Logistics Carrier Webhook & Delivery Gateway Timeout',
+        description: 'Third-party delivery carrier endpoint outage causing message queue backlog and circuit breaker trip',
+        severity: 'MEDIUM',
+        status: 'ACTIVE',
+        created_at: '2026-10-17T14:10:00Z',
         is_synthetic: true
     })
 
@@ -51,6 +65,7 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (team_checkout:Team {id: 'team-checkout', name: 'Checkout & Payments Platform', on_call: 'Sarah Connor (Staff SRE)', is_synthetic: true})
     CREATE (team_gateway:Team {id: 'team-gateway', name: 'Core Traffic & Gateways', on_call: 'Alex Murphy (Traffic Lead)', is_synthetic: true})
     CREATE (team_bi:Team {id: 'team-bi', name: 'Business Intelligence & Analytics', on_call: 'Data Ops Team', is_synthetic: true})
+    CREATE (team_logistics:Team {id: 'team-logistics', name: 'Fulfillment & Logistics', on_call: 'Elena Vance (Logistics SRE)', is_synthetic: true})
 
     // --- 3. SERVICES (Connected Chain + 1 Disconnected Negative Test) ---
     CREATE (s_web:Service {id: 'svc-web', name: 'web-frontend', criticality: 'HIGH', health: 'DEGRADED', status: 'DEGRADED', is_synthetic: true})
@@ -59,6 +74,8 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (s_pay:Service {id: 'svc-payment', name: 'payment-service', criticality: 'CRITICAL', health: 'FAILING', status: 'OUTAGE', is_synthetic: true})
     CREATE (s_inv:Service {id: 'svc-inventory', name: 'inventory-service', criticality: 'MEDIUM', health: 'HEALTHY', status: 'HEALTHY', is_synthetic: true})
     CREATE (s_notif:Service {id: 'svc-notification', name: 'notification-service', criticality: 'LOW', health: 'HEALTHY', status: 'HEALTHY', is_synthetic: true})
+    CREATE (s_auth:Service {id: 'svc-auth', name: 'auth-service', criticality: 'CRITICAL', health: 'DEGRADED', status: 'DEGRADED', is_synthetic: true})
+    CREATE (s_logistics:Service {id: 'svc-logistics', name: 'logistics-service', criticality: 'MEDIUM', health: 'DEGRADED', status: 'DEGRADED', is_synthetic: true})
     CREATE (s_analytics:Service {id: 'svc-analytics', name: 'analytics-pipeline', criticality: 'LOW', health: 'HEALTHY', status: 'HEALTHY', is_synthetic: true})
 
     // Ownership: (Team)-[:OWNS]->(Service)
@@ -68,18 +85,21 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (team_checkout)-[:OWNS]->(s_pay)
     CREATE (team_checkout)-[:OWNS]->(s_inv)
     CREATE (team_gateway)-[:OWNS]->(s_notif)
+    CREATE (team_gateway)-[:OWNS]->(s_auth)
+    CREATE (team_logistics)-[:OWNS]->(s_logistics)
     CREATE (team_bi)-[:OWNS]->(s_analytics)
 
     // Dependency Topology: (consumer:Service)-[:DEPENDS_ON]->(provider:Service)
-    // Multi-hop path: web -> gateway -> order -> payment (4 hops)
     CREATE (s_web)-[:DEPENDS_ON]->(s_gw)
     CREATE (s_gw)-[:DEPENDS_ON]->(s_order)
     CREATE (s_order)-[:DEPENDS_ON]->(s_pay)
     CREATE (s_order)-[:DEPENDS_ON]->(s_inv)
     CREATE (s_gw)-[:DEPENDS_ON]->(s_notif)
+    CREATE (s_gw)-[:DEPENDS_ON]->(s_auth)
+    CREATE (s_order)-[:DEPENDS_ON]->(s_logistics)
     // svc-analytics has NO DEPENDS_ON edges (Negative test: disconnected from blast radius)
 
-    // --- 4. ALERTS (Synthetic) ---
+    // --- 4. ALERTS: INC-4091 (Synthetic) ---
     CREATE (alt_gw:Alert {
         id: 'ALT-881',
         signal: '504 Gateway Timeout Spike (p99 > 15s)',
@@ -119,7 +139,59 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (alt_pay)-[:OBSERVED_ON]->(s_pay)
     CREATE (alt_order)-[:OBSERVED_ON]->(s_order)
 
-    // --- 5. COMPETING HYPOTHESIS 1: SHARED PACKAGE & VULNERABILITY ---
+    // --- 5. ALERTS: INC-3022 (Synthetic) ---
+    CREATE (alt_auth_1:Alert {
+        id: 'ALT-301',
+        signal: 'Session Cache Eviction Rate Surge > 950 keys/sec',
+        alert_type: 'CACHE_EVICTION_SURGE',
+        observed_value: '950 evictions/sec',
+        threshold: '50 evictions/sec',
+        timestamp: '2026-10-17T08:12:00Z',
+        source: 'Redis Prometheus Exporter',
+        is_synthetic: true
+    })
+    CREATE (alt_auth_2:Alert {
+        id: 'ALT-302',
+        signal: 'P95 Auth Token Verify Latency Elevated',
+        alert_type: 'AUTH_LATENCY_SPIKE',
+        observed_value: '1420ms',
+        threshold: '100ms',
+        timestamp: '2026-10-17T08:14:00Z',
+        source: 'Datadog APM Auth Monitor',
+        is_synthetic: true
+    })
+    CREATE (inc2)-[:HAS_ALERT]->(alt_auth_1)
+    CREATE (inc2)-[:HAS_ALERT]->(alt_auth_2)
+    CREATE (alt_auth_1)-[:OBSERVED_ON]->(s_auth)
+    CREATE (alt_auth_2)-[:OBSERVED_ON]->(s_auth)
+
+    // --- 6. ALERTS: INC-5102 (Synthetic) ---
+    CREATE (alt_logistics_1:Alert {
+        id: 'ALT-501',
+        signal: 'External Carrier Dispatch Webhook Timeout > 30s',
+        alert_type: 'WEBHOOK_504_TIMEOUT',
+        observed_value: '31200ms',
+        threshold: '2000ms',
+        timestamp: '2026-10-17T14:08:00Z',
+        source: 'CircuitBreaker Sentinel',
+        is_synthetic: true
+    })
+    CREATE (alt_logistics_2:Alert {
+        id: 'ALT-502',
+        signal: 'Delivery Queue Dead-Letter Threshold Surpassed',
+        alert_type: 'QUEUE_OVERFLOW',
+        observed_value: '5240 messages in DLQ',
+        threshold: '500 messages',
+        timestamp: '2026-10-17T14:09:30Z',
+        source: 'RabbitMQ Metrics Collector',
+        is_synthetic: true
+    })
+    CREATE (inc3)-[:HAS_ALERT]->(alt_logistics_1)
+    CREATE (inc3)-[:HAS_ALERT]->(alt_logistics_2)
+    CREATE (alt_logistics_1)-[:OBSERVED_ON]->(s_logistics)
+    CREATE (alt_logistics_2)-[:OBSERVED_ON]->(s_logistics)
+
+    // --- 7. PACKAGES & VULNERABILITIES ---
     CREATE (pkg_auth:Package {
         id: 'pkg-auth-tokens',
         name: 'auth-tokens-lib',
@@ -138,8 +210,9 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (pkg_auth)-[:HAS_VULNERABILITY]->(vuln_cve)
     CREATE (s_order)-[:USES]->(pkg_auth)
     CREATE (s_pay)-[:USES]->(pkg_auth)
+    CREATE (s_auth)-[:USES]->(pkg_auth)
 
-    // --- 6. COMPETING HYPOTHESIS 2: RECENT DEPLOYMENTS ---
+    // --- 8. RECENT DEPLOYMENTS ---
     CREATE (dep_pay_bad:Deployment {
         id: 'dep-pay-v2.4.1',
         version: 'v2.4.1',
@@ -167,12 +240,32 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
         author: 'order-dev@company.com',
         is_synthetic: true
     })
+    CREATE (dep_auth_bad:Deployment {
+        id: 'dep-auth-v1.4.2',
+        version: 'v1.4.2',
+        timestamp: '2026-10-17T08:10:00Z',
+        status: 'FAILED_HEALTHCHECKS',
+        commit_sha: 'b8e120f',
+        author: 'auth-bot@company.com',
+        is_synthetic: true
+    })
+    CREATE (dep_logistics_good:Deployment {
+        id: 'dep-logistics-v1.1.0',
+        version: 'v1.1.0',
+        timestamp: '2026-10-15T09:00:00Z',
+        status: 'STABLE',
+        commit_sha: '4d10f8a',
+        author: 'logistics-dev@company.com',
+        is_synthetic: true
+    })
 
     CREATE (s_pay)-[:DEPLOYED_IN]->(dep_pay_bad)
     CREATE (s_pay)-[:DEPLOYED_IN]->(dep_pay_good)
     CREATE (s_order)-[:DEPLOYED_IN]->(dep_order_good)
+    CREATE (s_auth)-[:DEPLOYED_IN]->(dep_auth_bad)
+    CREATE (s_logistics)-[:DEPLOYED_IN]->(dep_logistics_good)
 
-    // --- 7. EVIDENCE & PROVENANCE ---
+    // --- 9. EVIDENCE & PROVENANCE (INC-4091) ---
     CREATE (evi_canary:Evidence {
         id: 'EVI-901',
         kind: 'LOG_TRACE',
@@ -214,6 +307,59 @@ def seed_database(graph_name: str = settings.FALKORDB_GRAPH) -> Dict[str, Any]:
     CREATE (evi_latency)-[:SUPPORTS]->(inc)
     CREATE (evi_latency)-[:OBSERVED]->(s_pay)
     CREATE (evi_latency)-[:REFERS_TO]->(dep_pay_bad)
+
+    // --- 10. EVIDENCE & PROVENANCE (INC-3022) ---
+    CREATE (evi_redis_config:Evidence {
+        id: 'EVI-301',
+        kind: 'LOG_TRACE',
+        source_type: 'CONFIG_AUDIT',
+        source_ref: 'redis://auth-cache/config.log',
+        observed_at: '2026-10-17T08:11:00Z',
+        observation: 'Redis maxmemory-policy misconfigured to volatile-ttl with 30s expiry instead of 24h in dep-auth-v1.4.2',
+        summary: 'Redis maxmemory-policy misconfigured to volatile-ttl with 30s expiry instead of 24h in dep-auth-v1.4.2',
+        is_synthetic: true
+    })
+    CREATE (evi_waf_ddos:Evidence {
+        id: 'EVI-302',
+        kind: 'METRIC_ANOMALY',
+        source_type: 'WAF_METRICS',
+        source_ref: 'waf://auth-service/ingress-rate',
+        observed_at: '2026-10-17T08:13:00Z',
+        observation: 'WAF ingress traffic reports normal login volume 118 req/s (0 DDoS anomaly score)',
+        summary: 'WAF ingress traffic reports normal login volume 118 req/s (0 DDoS anomaly score)',
+        is_synthetic: true
+    })
+    CREATE (evi_redis_config)-[:SUPPORTS]->(inc2)
+    CREATE (evi_redis_config)-[:OBSERVED]->(s_auth)
+    CREATE (evi_redis_config)-[:REFERS_TO]->(dep_auth_bad)
+    CREATE (evi_waf_ddos)-[:SUPPORTS]->(inc2)
+    CREATE (evi_waf_ddos)-[:OBSERVED]->(s_auth)
+
+    // --- 11. EVIDENCE & PROVENANCE (INC-5102) ---
+    CREATE (evi_carrier_outage:Evidence {
+        id: 'EVI-501',
+        kind: 'LOG_TRACE',
+        source_type: 'STATUS_PAGE_INGEST',
+        source_ref: 'carrier-api://status/dispatch-endpoint',
+        observed_at: '2026-10-17T14:07:30Z',
+        observation: 'Third-party delivery carrier API reports regional gateway outage on /v1/dispatch endpoint',
+        summary: 'Third-party delivery carrier API reports regional gateway outage on /v1/dispatch endpoint',
+        is_synthetic: true
+    })
+    CREATE (evi_internal_dns:Evidence {
+        id: 'EVI-502',
+        kind: 'METRIC_ANOMALY',
+        source_type: 'NETWORK_TELEMETRY',
+        source_ref: 'network://coredns/resolution-latency',
+        observed_at: '2026-10-17T14:08:45Z',
+        observation: 'Internal CoreDNS latency normal at 1.8ms; outbound NAT reports 0% packet loss to other external targets',
+        summary: 'Internal CoreDNS latency normal at 1.8ms; outbound NAT reports 0% packet loss to other external targets',
+        is_synthetic: true
+    })
+    CREATE (evi_carrier_outage)-[:SUPPORTS]->(inc3)
+    CREATE (evi_carrier_outage)-[:OBSERVED]->(s_logistics)
+    CREATE (evi_internal_dns)-[:SUPPORTS]->(inc3)
+    CREATE (evi_internal_dns)-[:OBSERVED]->(s_logistics)
 
     RETURN inc.id AS incident_id
     """
