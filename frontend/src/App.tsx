@@ -496,6 +496,19 @@ export const App: React.FC = () => {
               >
                 FalkorDB Track 01
               </span>
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  color: '#6EE7B7',
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                }}
+              >
+                GPLv3
+              </span>
             </div>
             <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
               Operational Reasoning & Causal Analysis through Linked Evidence

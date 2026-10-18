@@ -3,7 +3,7 @@
 > **Trace the cause. Map the impact. Act with evidence.**
 
 [![FalkorDB Track 01](https://img.shields.io/badge/FalkorDB-Track%2001%20Agent-3B82F6?style=for-the-badge&logo=redis&logoColor=white)](https://docs.falkordb.com/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge&logo=gnu&logoColor=white)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-1.0.0-009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
@@ -244,4 +244,6 @@ The test suite in `tests/` validates all Master Engineering Prompt criteria:
 
 ## 📄 License
  
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge&logo=gnu&logoColor=white)](LICENSE)
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE) (see [COPYING](COPYING)).
